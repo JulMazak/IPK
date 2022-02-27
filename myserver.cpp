@@ -1,4 +1,4 @@
-//...INCLUDES...
+//***INCLUDES***
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netdb.h>
@@ -9,12 +9,11 @@
 #include <fstream>
 #include <unistd.h>
 #include <string>
-//... DEFINES...
+//***DEFINES***
 #define BACKLOG 10
 #define BUFFER_SIZE 30000
 #define PROTOCOL 0
 using namespace std;
-
 // definitions of classes
 namespace MyServer
 {
@@ -26,11 +25,10 @@ namespace MyServer
         struct sockaddr_storage storage;
         struct addrinfo *MyServerinfo;
         socklen_t size;
-        int info, sock, listener, binder, newsock, msg_len, sender,receiver,optval,hostnum;
-        string messag,respond; 
-        int req;
-        char request[100];
-        char hostname[100];
+        int info, sock, listener, binder, newsock, msg_len, sender,receiver,optval,hostnum,req,i;
+        string messag,respond,first_line; 
+        string cpu[10],cpu2[10];
+        char request[100],hostname[100];
         char buffer[BUFFER_SIZE] = {0};
        //FUNCTIONS
         void CallError();
@@ -43,19 +41,17 @@ namespace MyServer
         void Server(int port);
         void Hostname();
         void CPU_Name();
+        void Load_read(string cpu[10]);
         void Load();
     };
 
 }
-
 //Error Handling 
 void MyServer::Socket::CallError()
 {
         cout << " ERROR : " << strerror(errno) << '\n';
         exit(EXIT_FAILURE);
 }
-
-
 //Creation of socket and filling 
 int MyServer::Socket::CreateSocket(int domain, int type, int protocol)
 {
@@ -75,12 +71,10 @@ void MyServer::Socket::Binding(int port)
     myaddr.sin_family = AF_INET;
     myaddr.sin_port = htons(port);
     myaddr.sin_addr.s_addr = INADDR_ANY;
-
     memset(myaddr.sin_zero, '\0', sizeof myaddr.sin_zero);
 
     binder = bind(sock,(struct sockaddr *)&myaddr, sizeof(myaddr));
-   
-    if (binder == -1)
+   if (binder == -1)
         CallError();
 }
 //Listen to requests
@@ -90,7 +84,6 @@ void MyServer::Socket::Listening()
    if(listener == -1)
        CallError();
 }
-
 //Accepting of connection
 void MyServer::Socket::Accepting()
 {
@@ -98,7 +91,8 @@ void MyServer::Socket::Accepting()
     newsock = accept(sock,(struct sockaddr *)&storage,&size);
     read(newsock,buffer,BUFFER_SIZE);
     strncpy (request,buffer,14);
-    cout<<"request is "<<request<<endl;
+    if(request[0] != 'G')
+    messag = "HTTP/1.1 405 Method Not Allowed\r\nContent-Type: text/plain;\r\n\r\nINVALID METHOD";
     string request2(request);
     request2 = request2.substr(request2.find("/")+1,strlen(request));
     request2 = request2.substr(0,10);
@@ -110,11 +104,10 @@ void MyServer::Socket::Accepting()
     else if (request2.compare("load HTTP") == 0)
     req = 3;
 }
- 
  // Respond accordingly
  void MyServer::Socket::Responding()
  {
-     switch(req) {
+    switch(req) {
   case 1 :
     Hostname();
     messag = "HTTP/1.1 200 OK\r\nContent-Type: text/plain;\r\n\r\n"+respond;
@@ -130,11 +123,9 @@ void MyServer::Socket::Accepting()
   default:
   messag = "HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain;\r\n\r\nINVALID REQUEST";
 }
- 
 const char *message = messag.c_str();
 write(newsock , message , strlen(message));
-
-   
+ 
  }
 // End connection
 void MyServer::Socket::End()
@@ -163,36 +154,28 @@ void MyServer::Socket::Hostname()
     CallError();
     respond = hostname;
 }
-// GET load
-void MyServer::Socket::Load()
+// Reading information about CPU usage
+void MyServer::Socket::Load_read(string cpu[10])
 {
-    // first reading
     ifstream infile;
     string file("/proc/stat");
     infile.open(file);
-    string first_line;
     getline(infile,first_line);
-    string cpu[10] = {};
-    int i = 0;
+    i = 0;
     stringstream ssin(first_line);
-    while (ssin.good() && i < 10){
+    while(ssin.good() && i < 10)
+    {
         ssin >> cpu[i];
         ++i;
     }
     infile.close();
+}
+// GET load
+void MyServer::Socket::Load()
+{
+    Load_read(cpu);
     sleep(1);
-    //second reading
-    infile.open(file);
-    string first_line2;
-    getline(infile,first_line2);
-    string cpu2[10] = {};
-    i = 0;
-    stringstream ssins(first_line2);
-    while (ssins.good() && i < 10){
-        ssins >> cpu2[i];
-        ++i;
-    }
-    infile.close();   
+    Load_read(cpu2);
     long double idle = stol(cpu2[4]);
     long double previdle = stol(cpu[4]);
     long double total = stol(cpu2[1])+stol(cpu2[2])+stol(cpu2[3])+stol(cpu2[4])+stol(cpu2[5])+stol(cpu2[6])+stol(cpu2[7]);
@@ -201,12 +184,12 @@ void MyServer::Socket::Load()
     string temp = to_string(loadavg*100);
     respond = temp.substr(0,temp.find(".")+3)+"%";
 }
+// GET cpu-name
 void MyServer::Socket::CPU_Name()
 {
     ifstream infile;
     string file("/proc/cpuinfo");
     infile.open(file);
-    string first_line;
     string respond2 = "BAD REQUEST";
     while(getline(infile, first_line))
 {
@@ -217,7 +200,6 @@ void MyServer::Socket::CPU_Name()
 int size = respond2.length();
 respond2 = respond2.substr(respond2.find(":")+2,size);
 respond = respond2;
-
 }
 int main(int argc, char *argv[])
 {
