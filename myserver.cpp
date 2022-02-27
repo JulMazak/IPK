@@ -1,15 +1,22 @@
+//...INCLUDES...
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netdb.h>
 #include <cerrno>
 #include <cstring>
 #include <iostream>
+#include <sstream>
 #include <fstream>
-
+#include <unistd.h>
+#include <string>
+//... DEFINES...
 #define BACKLOG 10
+#define BUFFER_SIZE 30000
+#define PROTOCOL 0
 using namespace std;
 
-namespace Server
+// definitions of classes
+namespace MyServer
 {
     class Socket
     {
@@ -17,109 +24,208 @@ namespace Server
         //DATA STRUCTURES
         struct sockaddr_in myaddr;
         struct sockaddr_storage storage;
-        struct addrinfo hints;
-        struct addrinfo *serverinfo;
+        struct addrinfo *MyServerinfo;
         socklen_t size;
-        int info, sock, listener, binder, newsock, msg_len, sender,receiver;
-        char *message;
+        int info, sock, listener, binder, newsock, msg_len, sender,receiver,optval,hostnum;
+        string messag,respond; 
+        int req;
+        char request[100];
+        char hostname[100];
+        char buffer[BUFFER_SIZE] = {0};
        //FUNCTIONS
-        void CallError(int error);
+        void CallError();
         int CreateSocket(int domain, int type, int protocol);
-        int Bind(int port);
-        int Listening();
-        int Accepting();
-        int Sending();
-        int Receiving();
-        int End(struct addrinfo *var);
+        void Binding(int port);
+        void Listening();
+        void Accepting();
+        void Responding();
+        void End();
+        void Server(int port);
+        void Hostname();
+        void CPU_Name();
+        void Load();
     };
+
 }
 
 //Error Handling 
-void Server::Socket::CallError(int error)
+void MyServer::Socket::CallError()
 {
         cout << " ERROR : " << strerror(errno) << '\n';
         exit(EXIT_FAILURE);
 }
 
-//Creation of socket and filling 
-int Server::Socket::CreateSocket(int domain, int type, int protocol)
-{
-  
-    sock = socket(domain,type,protocol);
-    
-    if ( sock == -1 )
-    {
-        CallError(sock);
-    }
 
+//Creation of socket and filling 
+int MyServer::Socket::CreateSocket(int domain, int type, int protocol)
+{
+    sock = socket(domain,type,protocol);
+    if ( sock == -1 )
+        CallError();
+    optval = 1;
+    // solve "ALREADY IN USE " error
+    setsockopt (sock, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof optval);
+    setsockopt (sock, SOL_SOCKET, SO_REUSEPORT, &optval, sizeof optval);
     return sock;
 }
-
-int Server::Socket::Bind(int port)
+// Associate with port
+void MyServer::Socket::Binding(int port)
 {
     //myaddr structure
     myaddr.sin_family = AF_INET;
     myaddr.sin_port = htons(port);
-    // he uses htonl? should I? idk yet
     myaddr.sin_addr.s_addr = INADDR_ANY;
 
-    binder = bind(sock,(struct sockaddr *)&myaddr, sizeof myaddr);
+    memset(myaddr.sin_zero, '\0', sizeof myaddr.sin_zero);
+
+    binder = bind(sock,(struct sockaddr *)&myaddr, sizeof(myaddr));
    
     if (binder == -1)
-    {
-        CallError(binder);
-    }
-
-   return binder;
+        CallError();
 }
-
-int Server::Socket::Listening()
+//Listen to requests
+void MyServer::Socket::Listening()
 {
    listener = listen(sock,BACKLOG);
    if(listener == -1)
-   {
-       CallError(listener);
-   }
-   return listener;
+       CallError();
 }
 
 //Accepting of connection
-int Server::Socket::Accepting()
+void MyServer::Socket::Accepting()
 {
-    size = sizeof storage;
+    size = sizeof(storage);
     newsock = accept(sock,(struct sockaddr *)&storage,&size);
-    return newsock;
+    read(newsock,buffer,BUFFER_SIZE);
+    strncpy (request,buffer,14);
+    cout<<"request is "<<request<<endl;
+    string request2(request);
+    request2 = request2.substr(request2.find("/")+1,strlen(request));
+    request2 = request2.substr(0,10);
+    req = 99;
+    if(request2.compare("hostname ") == 0)
+    req = 1;
+    else if(request2.compare("cpu-name ") == 0)
+    req = 2;
+    else if (request2.compare("load HTTP") == 0)
+    req = 3;
 }
-
-int Server::Socket::Sending()
-{
-   msg_len = strlen(message);
-   //returns the number of bytes that were sent
-   sender = send(sock,message,msg_len,0);
-   return sender;
+ 
+ // Respond accordingly
+ void MyServer::Socket::Responding()
+ {
+     switch(req) {
+  case 1 :
+    Hostname();
+    messag = "HTTP/1.1 200 OK\r\nContent-Type: text/plain;\r\n\r\n"+respond;
+    break;
+  case 2 :
+    CPU_Name();
+    messag = "HTTP/1.1 200 OK\r\nContent-Type: text/plain;\r\n\r\n"+respond;
+    break;
+  case 3:
+  Load();
+  messag = "HTTP/1.1 200 OK\r\nContent-Type: text/plain;\r\n\r\n"+respond;
+  break;
+  default:
+  messag = "HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain;\r\n\r\nINVALID REQUEST";
 }
+ 
+const char *message = messag.c_str();
+write(newsock , message , strlen(message));
 
-int Server::Socket::Receiving()
+   
+ }
+// End connection
+void MyServer::Socket::End()
 {
-    //TODO
-   receiver = recv(sock,NULL,0,0);
-   return receiver;
+    close(newsock);
 }
-
-int Server::Socket::End(struct addrinfo *var)
+// SERVER class
+void MyServer::Socket::Server(int port)
 {
-    //free linked list
-    freeaddrinfo(var);
-    if(shutdown(newsock,2) == -1)
+    CreateSocket(AF_INET,SOCK_STREAM,PROTOCOL);
+    Binding(port);
+    Listening();
+    while(true)
     {
-        CallError(-1);
+    Accepting();
+    Responding();
+    End();
     }
-
-   return 0;
+    
 }
 
+// GET Hostname
+void MyServer::Socket::Hostname()
+{
+    if ((hostnum = gethostname(hostname, 100)) != 0 )
+    CallError();
+    respond = hostname;
+}
+// GET load
+void MyServer::Socket::Load()
+{
+    // first reading
+    ifstream infile;
+    string file("/proc/stat");
+    infile.open(file);
+    string first_line;
+    getline(infile,first_line);
+    string cpu[10] = {};
+    int i = 0;
+    stringstream ssin(first_line);
+    while (ssin.good() && i < 10){
+        ssin >> cpu[i];
+        ++i;
+    }
+    infile.close();
+    sleep(1);
+    //second reading
+    infile.open(file);
+    string first_line2;
+    getline(infile,first_line2);
+    string cpu2[10] = {};
+    i = 0;
+    stringstream ssins(first_line2);
+    while (ssins.good() && i < 10){
+        ssins >> cpu2[i];
+        ++i;
+    }
+    infile.close();   
+    long double idle = stol(cpu2[4]);
+    long double previdle = stol(cpu[4]);
+    long double total = stol(cpu2[1])+stol(cpu2[2])+stol(cpu2[3])+stol(cpu2[4])+stol(cpu2[5])+stol(cpu2[6])+stol(cpu2[7]);
+    long double prevtotal = stol(cpu[1])+stol(cpu[2])+stol(cpu[3])+stol(cpu[4])+stol(cpu[5])+stol(cpu[6])+stol(cpu[7]);
+    long double loadavg = 1 - ( (idle - previdle) / (total - prevtotal));
+    string temp = to_string(loadavg*100);
+    respond = temp.substr(0,temp.find(".")+3)+"%";
+}
+void MyServer::Socket::CPU_Name()
+{
+    ifstream infile;
+    string file("/proc/cpuinfo");
+    infile.open(file);
+    string first_line;
+    string respond2 = "BAD REQUEST";
+    while(getline(infile, first_line))
+{
+    if (first_line.find("name") != string::npos)
+        respond2 = first_line;
+
+}
+int size = respond2.length();
+respond2 = respond2.substr(respond2.find(":")+2,size);
+respond = respond2;
+
+}
 int main(int argc, char *argv[])
 {
+    if(argc == 2)
+    {
     int port = stoi(argv[1]);
+    MyServer::Socket obj;
+    obj.Server(port);
+    }
     return 0;
 }
